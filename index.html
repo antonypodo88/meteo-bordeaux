@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Météo Bordeaux">
+<title>Météo Bordeaux Métropole</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  body { font-family: system-ui; background: #0f1419; color: #e8eef3; margin: 0; padding: 16px; max-width: 900px; margin: auto; }
+  h1 { font-size: 1.4em; margin: 4px 0 2px; }
+  .sous { color: #8a9aa8; font-size: 0.85em; margin-bottom: 12px; }
+  #carte { height: 440px; border-radius: 14px; }
+  .controles { display: flex; align-items: center; gap: 10px; margin: 8px 0 16px; font-size: 0.9em; }
+  .controles button { background: #1a232c; color: #e8eef3; border: 1px solid #333; border-radius: 10px; padding: 6px 14px; font-size: 1em; }
+  .bulle { background: #1a232c; color: #fff; border: 2px solid #ffd400; border-radius: 12px; padding: 2px 7px;
+           font-weight: 700; font-size: 13px; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.4); cursor: pointer; }
+  .bulle.choisie { background: #ffd400; color: #111; }
+  .detail { display: flex; align-items: center; gap: 16px; margin: 6px 0 12px; }
+  .temp { font-size: 3.4em; font-weight: 700; }
+  .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+  .case { background: #1a232c; border-radius: 14px; padding: 12px; }
+  .case .label { color: #8a9aa8; font-size: 0.8em; }
+  .case .valeur { font-size: 1.3em; font-weight: 600; margin-top: 4px; }
+  h2 { font-size: 1.1em; margin: 20px 0 10px; }
+  .previsions { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+  .heure { background: #1a232c; border-radius: 12px; padding: 10px; min-width: 62px; text-align: center; flex: 0 0 auto; }
+  .heure .h { color: #8a9aa8; font-size: 0.8em; }
+  .heure .e { font-size: 1.6em; margin: 4px 0; }
+  .heure .p { color: #5fb0ff; font-size: 0.8em; }
+  .credits { color: #5c6b78; font-size: 0.75em; margin-top: 24px; }
+  .credits a { color: #7a8b99; }
+</style>
+</head>
+<body>
+
+<h1>Bordeaux Métropole en direct</h1>
+<div class="sous" id="maj">Chargement…</div>
+
+<div id="carte"></div>
+<div class="controles">
+  <button id="lecture">⏸</button>
+  <span>Radar de pluie : <b id="heureRadar">–</b></span>
+</div>
+
+<h2 id="nomCommune">–</h2>
+<div class="detail">
+  <div class="temp" id="temp">–</div>
+  <div class="sous" id="etat"></div>
+</div>
+<div class="grille">
+  <div class="case"><div class="label">Ressenti</div><div class="valeur" id="ressenti">–</div></div>
+  <div class="case"><div class="label">Vent</div><div class="valeur" id="vent">–</div></div>
+  <div class="case"><div class="label">Rafales</div><div class="valeur" id="rafales">–</div></div>
+  <div class="case"><div class="label">Pluie</div><div class="valeur" id="pluie">–</div></div>
+  <div class="case"><div class="label">Humidité</div><div class="valeur" id="humidite">–</div></div>
+</div>
+
+<h2>Prochaines heures</h2>
+<div class="previsions" id="previsions">Chargement…</div>
+
+<div class="credits">
+  Météo : <a href="https://open-meteo.com">Open-Meteo</a> (estimations par modèle) ·
+  Radar : Weather data by <a href="https://www.rainviewer.com">RainViewer</a> ·
+  Carte : © <a href="https://www.ign.fr">IGN</a>
+</div>
+
+<script>
+// ===== LES COMMUNES (nom, latitude, longitude) =====
+const COMMUNES = [
+  ["Bordeaux", 44.8378, -0.5792], ["Mérignac", 44.8386, -0.6436], ["Pessac", 44.8067, -0.6311],
+  ["Talence", 44.8025, -0.5886], ["Bègles", 44.8086, -0.5478], ["Villenave-d'Ornon", 44.7806, -0.5658],
+  ["Gradignan", 44.7725, -0.6156], ["Cenon", 44.8578, -0.5317], ["Lormont", 44.8792, -0.5217],
+  ["Floirac", 44.8361, -0.5286], ["Le Bouscat", 44.8653, -0.5997], ["Bruges", 44.8828, -0.6114],
+  ["Eysines", 44.8836, -0.6503], ["Le Haillan", 44.8725, -0.6778], ["Blanquefort", 44.9106, -0.6364],
+  ["Saint-Médard-en-Jalles", 44.8964, -0.7194], ["Bassens", 44.9022, -0.5167], ["Ambarès-et-Lagrave", 44.9253, -0.4861],
+];
+// ====================================================
+
+const heureFR = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const icone = c => c === 0 ? "☀️" : c <= 2 ? "🌤️" : c === 3 ? "☁️" : c <= 48 ? "🌫️" : c <= 57 ? "🌦️"
+                 : c <= 67 ? "🌧️" : c <= 77 ? "🌨️" : c <= 82 ? "🌧️" : c <= 86 ? "🌨️" : "⛈️";
+const texte = c => c === 0 ? "Ciel dégagé" : c <= 2 ? "Éclaircies" : c === 3 ? "Couvert" : c <= 48 ? "Brouillard"
+                 : c <= 57 ? "Bruine" : c <= 67 ? "Pluie" : c <= 77 ? "Neige" : c <= 82 ? "Averses" : c <= 86 ? "Averses de neige" : "Orage";
+const direction = d => ["N", "NE", "E", "SE", "S", "SO", "O", "NO"].at(Math.round(d / 45) % 8);
+
+let meteo = [], choix = 0;
+try { choix = Number(localStorage.getItem("communeBdx")) || 0; } catch (e) {}
+if (choix >= COMMUNES.length) choix = 0;
+
+// ===================== CARTE (IGN) =====================
+const carte = L.map("carte", { zoomControl: false }).setView([44.855, -0.60], 11);
+L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
+  + "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png"
+  + "&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}", { maxZoom: 18, attribution: "© IGN" }).addTo(carte);
+const calqueBulles = L.layerGroup().addTo(carte);
+
+// ===================== MÉTÉO DE TOUTES LES COMMUNES (1 seule requête) =====================
+async function chargerMeteo() {
+  try {
+    const url = "https://api.open-meteo.com/v1/forecast"
+      + "?latitude=" + COMMUNES.map(c => c[1]).join(",")
+      + "&longitude=" + COMMUNES.map(c => c[2]).join(",")
+      + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+      + "&hourly=temperature_2m,precipitation_probability,weather_code"
+      + "&timezone=Europe%2FParis&forecast_days=2";
+    const data = await (await fetch(url)).json();
+    meteo = Array.isArray(data) ? data : [data];
+    if (!meteo[0]?.current) {
+      document.getElementById("maj").textContent = "Format inattendu : " + JSON.stringify(data).slice(0, 300);
+      return;
+    }
+    document.getElementById("maj").textContent = "Mis à jour à " + heureFR(new Date()) + " · touchez une commune";
+    dessinerBulles();
+    afficherCommune();
+  } catch (e) {
+    document.getElementById("maj").textContent = "Erreur météo : " + e.message;
+  }
+}
+
+function dessinerBulles() {
+  calqueBulles.clearLayers();
+  COMMUNES.forEach(([nom, lat, lon], i) => {
+    const c = meteo[i]?.current;
+    if (!c) return;
+    L.marker([lat, lon], { icon: L.divIcon({ className: "",
+        html: `<span class="bulle ${i === choix ? "choisie" : ""}">${icone(c.weather_code)} ${Math.round(c.temperature_2m)}°</span>` }) })
+      .on("click", () => choisir(i))
+      .addTo(calqueBulles);
+  });
+}
+
+function choisir(i) {
+  choix = i;
+  try { localStorage.setItem("communeBdx", i); } catch (e) {}
+  dessinerBulles();
+  afficherCommune();
+}
+
+function afficherCommune() {
+  const m = meteo[choix];
+  if (!m) return;
+  const c = m.current;
+  document.getElementById("nomCommune").textContent = COMMUNES[choix][0];
+  document.getElementById("temp").textContent = c.temperature_2m.toFixed(1) + "°";
+  document.getElementById("etat").textContent = icone(c.weather_code) + " " + texte(c.weather_code);
+  document.getElementById("ressenti").textContent = Math.round(c.apparent_temperature) + "°";
+  document.getElementById("vent").textContent = Math.round(c.wind_speed_10m) + " km/h " + direction(c.wind_direction_10m);
+  document.getElementById("rafales").textContent = Math.round(c.wind_gusts_10m) + " km/h";
+  document.getElementById("pluie").textContent = c.precipitation.toFixed(1) + " mm";
+  document.getElementById("humidite").textContent = Math.round(c.relative_humidity_2m) + " %";
+
+  const depuis = Date.now() - 3600000;
+  const heures = m.hourly.time
+    .map((t, i) => ({ t: new Date(t), temp: m.hourly.temperature_2m[i],
+                      pluie: m.hourly.precipitation_probability[i], code: m.hourly.weather_code[i] }))
+    .filter(h => h.t.getTime() >= depuis)
+    .slice(0, 24);
+  document.getElementById("previsions").innerHTML = heures.map(h => `
+    <div class="heure">
+      <div class="h">${h.t.getHours()} h</div>
+      <div class="e">${icone(h.code)}</div>
+      <div>${Math.round(h.temp)}°</div>
+      <div class="p">${h.pluie ?? 0} %</div>
+    </div>`).join("");
+}
+
+// ===================== RADAR ANIMÉ =====================
+let images = [], calques = [], position = 0, enLecture = true, minuteur = null;
+
+async function chargerRadar() {
+  try {
+    const data = await (await fetch("https://api.rainviewer.com/public/weather-maps.json")).json();
+    calques.forEach(c => carte.removeLayer(c));
+    images = [...(data.radar?.past || []), ...(data.radar?.nowcast || [])];
+    calques = images.map(img => L.tileLayer(
+      data.host + img.path + "/256/{z}/{x}/{y}/2/1_1.png",
+      { opacity: 0, maxNativeZoom: 7, maxZoom: 18, zIndex: 10 }
+    ).addTo(carte));
+    position = images.length - 1;
+    afficherImage();
+    if (enLecture) demarrer();
+  } catch (e) {
+    document.getElementById("heureRadar").textContent = "erreur : " + e.message;
+  }
+}
+
+function afficherImage() {
+  calques.forEach((c, i) => c.setOpacity(i === position ? 0.7 : 0));
+  const img = images[position];
+  if (img) document.getElementById("heureRadar").textContent =
+    heureFR(new Date(img.time * 1000)) + (img.time * 1000 > Date.now() ? " (prévision)" : "");
+}
+
+function demarrer() {
+  clearInterval(minuteur);
+  minuteur = setInterval(() => { position = (position + 1) % images.length; afficherImage(); }, 600);
+}
+
+document.getElementById("lecture").onclick = () => {
+  enLecture = !enLecture;
+  document.getElementById("lecture").textContent = enLecture ? "⏸" : "▶";
+  enLecture ? demarrer() : clearInterval(minuteur);
+};
+
+// ===================== DÉMARRAGE =====================
+chargerMeteo();
+chargerRadar();
+setInterval(chargerMeteo, 15 * 60000);   // Open-Meteo actualise ses données toutes les 15 min
+setInterval(chargerRadar, 5 * 60000);
+</script>
+</body>
+</html>
